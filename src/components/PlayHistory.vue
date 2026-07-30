@@ -1,8 +1,10 @@
 <script setup>
 import { ref } from "vue";
 import { usePlayerStore } from "@/stores/player";
+import { useLocaleStore } from "@/stores/locale";
 
 const store = usePlayerStore();
+const localeStore = useLocaleStore();
 
 const activeTab = ref("queue");
 const dragOverSidebar = ref(false);
@@ -57,25 +59,7 @@ function playFromHistory(item) {
   }
 }
 
-// 历史记录
-function formatDate(timestamp) {
-  if (!timestamp) return "";
-  const date = new Date(timestamp);
-  const now = new Date();
-  const diff = now - date;
-
-  if (diff < 60000) return "刚刚";
-  if (diff < 3600000) return Math.floor(diff / 60000) + " 分钟前";
-  if (diff < 86400000) return Math.floor(diff / 3600000) + " 小时前";
-  if (diff < 604800000) return Math.floor(diff / 86400000) + " 天前";
-
-  return date.toLocaleDateString("zh-CN", {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
+// 历史记录 - 已迁移到 localeStore.relativeTime()
 
 function getProgressPercent(item) {
   if (!item.duration) return 0;
@@ -104,7 +88,7 @@ function getProgressPercent(item) {
         <line x1="12" y1="5" x2="12" y2="19" />
         <line x1="5" y1="12" x2="19" y2="12" />
       </svg>
-      <span>释放以加入队列</span>
+      <span>{{ localeStore.t('sidebar.dropToQueue') }}</span>
     </div>
 
     <!-- Tab 切换 -->
@@ -113,7 +97,7 @@ function getProgressPercent(item) {
         :class="{ active: activeTab === 'queue' }"
         @click="activeTab = 'queue'"
       >
-        队列
+        {{ localeStore.t('sidebar.queue') }}
         <span v-if="store.queue.length" class="badge">{{
           store.queue.length
         }}</span>
@@ -122,7 +106,7 @@ function getProgressPercent(item) {
         :class="{ active: activeTab === 'history' }"
         @click="activeTab = 'history'"
       >
-        历史
+        {{ localeStore.t('sidebar.history') }}
       </button>
     </div>
 
@@ -145,14 +129,14 @@ function getProgressPercent(item) {
           <line x1="3" y1="12" x2="3.01" y2="12" />
           <line x1="3" y1="18" x2="3.01" y2="18" />
         </svg>
-        <p>队列为空</p>
-        <p class="sub">拖拽视频文件到此处添加</p>
+        <p>{{ localeStore.t('sidebar.queueEmpty') }}</p>
+        <p class="sub">{{ localeStore.t('sidebar.queueEmptyHint') }}</p>
       </div>
 
       <div v-if="store.queue.length" class="queue-list">
         <div class="list-header">
-          <span class="list-count">{{ store.queue.length }} 个视频</span>
-          <button class="clear-btn" @click="store.clearQueue()">清空</button>
+          <span class="list-count">{{ localeStore.t('sidebar.videosCount', { count: store.queue.length }) }}</span>
+          <button class="clear-btn" @click="store.clearQueue()">{{ localeStore.t('sidebar.clear') }}</button>
         </div>
         <div
           v-for="(item, index) in store.queue"
@@ -175,7 +159,7 @@ function getProgressPercent(item) {
           <button
             class="remove-btn"
             @click.stop="store.removeFromQueue(item.id)"
-            title="移除"
+            :title="localeStore.t('sidebar.remove')"
           >
             <svg
               width="14"
@@ -208,13 +192,13 @@ function getProgressPercent(item) {
           <circle cx="12" cy="12" r="10" />
           <polyline points="12 6 12 12 16 14" />
         </svg>
-        <p>暂无播放记录</p>
+        <p>{{ localeStore.t('sidebar.historyEmpty') }}</p>
       </div>
 
       <div v-if="store.history.length" class="history-list">
         <div class="list-header">
-          <span class="list-count">{{ store.history.length }} 条记录</span>
-          <button class="clear-btn" @click="store.clearHistory()">清空</button>
+          <span class="list-count">{{ localeStore.t('sidebar.recordsCount', { count: store.history.length }) }}</span>
+          <button class="clear-btn" @click="store.clearHistory()">{{ localeStore.t('sidebar.clear') }}</button>
         </div>
         <div
           v-for="item in store.history"
@@ -227,14 +211,14 @@ function getProgressPercent(item) {
             <div class="item-name" :title="item.fileName">
               {{ item.fileName }}
               <span v-if="!isInQueue(item.fileName)" class="not-available"
-                >需重新拖入</span
+                >{{ localeStore.t('sidebar.reDropRequired') }}</span
               >
             </div>
             <div class="item-meta">
               <span v-if="item.fileSize">{{
                 store.formatSize(item.fileSize)
               }}</span>
-              <span>{{ formatDate(item.lastPlayTime) }}</span>
+              <span>{{ localeStore.relativeTime(item.lastPlayTime) }}</span>
             </div>
           </div>
           <div class="item-progress">
@@ -252,7 +236,7 @@ function getProgressPercent(item) {
           <button
             class="remove-btn"
             @click.stop="store.removeHistory(item.fileName)"
-            title="删除"
+            :title="localeStore.t('sidebar.delete')"
           >
             <svg
               width="14"

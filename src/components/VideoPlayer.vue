@@ -8,8 +8,10 @@ import {
   computed,
 } from "vue";
 import { usePlayerStore } from "@/stores/player";
+import { useLocaleStore } from "@/stores/locale";
 
 const store = usePlayerStore();
+const localeStore = useLocaleStore();
 
 const videoRef = ref(null);
 const dragOver = ref(false);
@@ -368,7 +370,7 @@ defineExpose({ loadVideo });
           <line x1="12" y1="12" x2="12" y2="21" />
           <path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3" />
         </svg>
-        <span>释放以切换视频</span>
+        <span>{{ localeStore.t('player.dropToSwitch') }}</span>
       </div>
     </div>
 
@@ -395,9 +397,9 @@ defineExpose({ loadVideo });
             <rect x="1" y="5" width="15" height="14" rx="2" ry="2" />
           </svg>
         </div>
-        <h2>拖拽视频文件到此处</h2>
-        <p>或点击选择文件</p>
-        <p class="hint">支持 MP4、WebM、OGG 等格式</p>
+        <h2>{{ localeStore.t('player.dropHere') }}</h2>
+        <p>{{ localeStore.t('player.orClick') }}</p>
+        <p class="hint">{{ localeStore.t('player.supportedFormats') }}</p>
       </div>
     </div>
 
@@ -451,7 +453,7 @@ defineExpose({ loadVideo });
               class="ctrl-btn"
               @click="$emit('play-previous')"
               :disabled="!store.hasPrevious"
-              title="上一个"
+              :title="localeStore.t('player.previous')"
             >
               <svg
                 width="18"
@@ -475,7 +477,7 @@ defineExpose({ loadVideo });
             <button
               class="ctrl-btn play-btn"
               @click="togglePlay"
-              :title="store.isPlaying ? '暂停' : '播放'"
+              :title="store.isPlaying ? localeStore.t('player.pause') : localeStore.t('player.play')"
             >
               <svg
                 v-if="!store.isPlaying"
@@ -503,7 +505,7 @@ defineExpose({ loadVideo });
               class="ctrl-btn"
               @click="$emit('play-next')"
               :disabled="!store.hasNext"
-              title="下一个"
+              :title="localeStore.t('player.next')"
             >
               <svg
                 width="18"
@@ -537,7 +539,7 @@ defineExpose({ loadVideo });
               @mouseenter="showVolumeSlider = true"
               @mouseleave="showVolumeSlider = false"
             >
-              <button class="ctrl-btn" @click="toggleMute" title="静音">
+              <button class="ctrl-btn" @click="toggleMute" :title="localeStore.t('player.mute')">
                 <svg
                   v-if="store.volume === 0"
                   width="20"
@@ -585,7 +587,7 @@ defineExpose({ loadVideo });
               <button
                 class="ctrl-btn speed-btn"
                 @click.stop="showSpeedMenu = !showSpeedMenu"
-                title="播放速率"
+                :title="localeStore.t('player.speed')"
               >
                 {{ store.playbackRate }}x
               </button>
@@ -602,7 +604,7 @@ defineExpose({ loadVideo });
             </div>
 
             <!-- 全屏 -->
-            <button class="ctrl-btn" @click="toggleFullscreen" title="全屏">
+            <button class="ctrl-btn" @click="toggleFullscreen" :title="localeStore.t('player.fullscreen')">
               <svg
                 v-if="!isFullscreen"
                 width="20"

@@ -4,6 +4,8 @@
 
 A minimal local video player built with **Vue 3 + Vite**. All playback happens entirely in your browser — video files are never uploaded to any server.
 
+![Screenshot](./screenshots/2.png)
+
 ## Features
 
 - **Local Playback**: Drag & drop video files onto the player, or click to select files — play them directly in the browser.

@@ -3,8 +3,11 @@ import { ref, nextTick, onMounted, onBeforeUnmount } from "vue";
 import VideoPlayer from "@/components/VideoPlayer.vue";
 import PlayHistory from "@/components/PlayHistory.vue";
 import { usePlayerStore } from "@/stores/player";
+import { useLocaleStore } from "@/stores/locale";
 
 const store = usePlayerStore();
+const localeStore = useLocaleStore();
+localeStore.init();
 const playerRef = ref(null);
 const showSidebar = ref(true);
 
@@ -90,9 +93,16 @@ function playNext() {
       </div>
       <div class="header-right">
         <button
+          class="lang-btn"
+          @click="localeStore.setLocale(localeStore.locale === 'zh' ? 'en' : 'zh')"
+          :title="localeStore.locale === 'zh' ? 'Switch to English' : '切换到中文'"
+        >
+          {{ localeStore.locale === 'zh' ? 'EN' : '中文' }}
+        </button>
+        <button
           class="toggle-sidebar"
           @click="showSidebar = !showSidebar"
-          :title="showSidebar ? '隐藏侧栏' : '显示侧栏'"
+          :title="showSidebar ? localeStore.t('sidebar.hide') : localeStore.t('sidebar.show')"
         >
           <svg
             width="18"
@@ -225,6 +235,25 @@ body {
 .toggle-sidebar:hover {
   background: rgba(255, 255, 255, 0.06);
   color: #ccc;
+}
+
+.lang-btn {
+  background: none;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: #777;
+  cursor: pointer;
+  padding: 1px 7px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.6;
+  transition: all 0.2s;
+}
+
+.lang-btn:hover {
+  border-color: #6366f1;
+  color: #6366f1;
+  background: rgba(99, 102, 241, 0.1);
 }
 
 .app-main {
