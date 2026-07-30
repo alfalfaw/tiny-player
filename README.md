@@ -1,80 +1,82 @@
 # Tiny Player
 
-一个简洁的本地视频播放器，基于 **Vue 3 + Vite** 构建。所有播放都在浏览器本地完成，视频文件不会上传到任何服务器。
+> [中文版本](./README.zh.md)
 
-## 功能特性
+A minimal local video player built with **Vue 3 + Vite**. All playback happens entirely in your browser — video files are never uploaded to any server.
 
-- **本地播放**：将视频文件拖拽到播放区域，或点击区域选择文件，直接在浏览器中播放。
-- **播放队列**：拖入多个视频可自动连播，支持「上一个 / 下一个」切换。
-- **播放历史**：自动记录播放过的视频，刷新页面后可在「历史」中查看并恢复。
-- **进度记忆**：自动保存并恢复播放进度、音量与倍速（基于 `localStorage` 持久化）。
-- **播放控制**：进度条拖拽跳转、音量调节、倍速（0.5x–2x）、全屏。
-- **键盘快捷键**：不使用鼠标也能轻松操控。
-- **深色界面**：支持侧边栏显隐，专注播放体验。
+## Features
 
-## 技术栈
+- **Local Playback**: Drag & drop video files onto the player, or click to select files — play them directly in the browser.
+- **Play Queue**: Drop multiple files to auto-play in sequence, with Previous / Next navigation.
+- **Play History**: Automatically records played videos; revisit and resume from the "History" tab after a page refresh.
+- **Progress Persistence**: Playback position, volume, and playback speed are auto-saved and restored via `localStorage`.
+- **Player Controls**: Draggable progress bar, volume slider, speed selector (0.5x–2x), and fullscreen toggle.
+- **Keyboard Shortcuts**: Control everything without touching the mouse.
+- **Dark Theme**: Clean dark UI with a toggleable sidebar for a focused viewing experience.
 
-- Vue 3（`Composition API` + `<script setup>`）
-- Pinia + `pinia-plugin-persistedstate`（状态管理与持久化）
+## Tech Stack
+
+- Vue 3 (Composition API + `<script setup>`)
+- Pinia + `pinia-plugin-persistedstate` (state management & persistence)
 - Vite 8
-- vue-router（已集成，路由暂未配置）
+- vue-router (included, routes not yet configured)
 
-## 快速开始
+## Quick Start
 
-环境要求：**Node.js** `^20.19.0 || >=22.12.0`，包管理器使用 **pnpm**。
+Requirements: **Node.js** `^20.19.0 || >=22.12.0`, package manager **pnpm**.
 
 ```sh
-pnpm install        # 安装依赖
-pnpm dev            # 启动开发服务器（热更新）
-pnpm build          # 构建生产版本，输出到 dist/
-pnpm preview        # 本地预览生产构建
+pnpm install        # Install dependencies
+pnpm dev            # Start dev server (HMR)
+pnpm build          # Build for production → dist/
+pnpm preview        # Preview production build locally
 ```
 
-> 若使用 npm / yarn，可对应替换为 `npm install` / `yarn` 等命令。
+> If you prefer npm / yarn, replace `pnpm` with `npm` or `yarn` accordingly.
 
-## 使用说明
+## Usage
 
-1. 打开应用后，将视频文件拖拽到中央播放区域，或点击该区域选择文件。
-2. 将视频拖拽到右侧侧边栏，可将其加入播放队列；侧栏提供「队列」与「历史」两个标签页。
-3. 播放进度、音量、倍速以及播放历史会自动保存到浏览器本地，刷新或重新打开页面后依然保留。
-   > 注意：持久化仅保存播放记录与进度信息，视频文件本身不会被保存，历史中的文件需重新拖入才能再次播放。
+1. Open the app, drag a video file onto the central player area, or click the area to pick a file.
+2. Drag files to the right sidebar to add them to the play queue. The sidebar has **Queue** and **History** tabs.
+3. Playback progress, volume, speed, and history are automatically saved to `localStorage` — they persist across page refreshes and browser restarts.
+   > Note: Only playback records and progress are persisted. The actual video files are not saved; files in history must be re-dragged to play again.
 
-## 键盘快捷键
+## Keyboard Shortcuts
 
-| 按键 | 功能 |
+| Key | Action |
 | --- | --- |
-| `空格` / `k` | 播放 / 暂停 |
-| `←` / `→` | 快退 / 快进 5 秒 |
-| `↑` / `↓` | 音量 + / - |
-| `f` | 切换全屏 |
-| `m` | 静音 / 取消静音 |
+| `Space` / `k` | Play / Pause |
+| `←` / `→` | Rewind / Fast-forward 5s |
+| `↑` / `↓` | Volume + / - |
+| `f` | Toggle fullscreen |
+| `m` | Mute / Unmute |
 
-## 项目结构
+## Project Structure
 
 ```
 tiny-player/
-├── index.html             # 应用入口 HTML
-├── vite.config.js         # Vite 配置（含 @ 别名指向 src）
-├── public/               # 静态资源（favicon 等）
+├── index.html             # Entry HTML
+├── vite.config.js         # Vite config (@ alias → src/)
+├── public/               # Static assets (favicon, etc.)
 └── src/
-    ├── main.js           # 应用入口，挂载 Pinia 与持久化插件
-    ├── App.vue           # 根组件，布局与拖拽/连播逻辑
+    ├── main.js           # App entry, mounts Pinia & persistence
+    ├── App.vue           # Root component, layout & drag/playback logic
     ├── components/
-    │   ├── VideoPlayer.vue   # 视频播放器与自定义控制栏
-    │   └── PlayHistory.vue   # 播放队列与历史侧边栏
+    │   ├── VideoPlayer.vue   # Video player with custom controls
+    │   └── PlayHistory.vue   # Play queue & history sidebar
     ├── stores/
-    │   └── player.js         # Pinia 播放状态（含持久化）
+    │   └── player.js         # Pinia player store (with persistence)
     └── router/
-        └── index.js         # vue-router 实例
+        └── index.js         # vue-router instance
 ```
 
-## 自定义配置
+## Configuration
 
-构建输出路径在 `vite.config.js` 中通过 `base` 配置，生产环境默认部署到 `/tiny-player/` 子路径。
+The build base path is set in `vite.config.js` via the `base` option. In production it defaults to `/tiny-player/`.
 
-更多 Vite 配置参见 [Vite Configuration Reference](https://vite.dev/config/)。
+See the [Vite Configuration Reference](https://vite.dev/config/) for more options.
 
-## 推荐开发环境
+## Recommended Development Setup
 
-- [VS Code](https://code.visualstudio.com/) + [Vue (Official)](https://marketplace.visualstudio.com/items?itemName=Vue.volar) 插件（请禁用 Vetur）。
-- 浏览器安装 [Vue.js devtools](https://chromewebstore.google.com/detail/vuejs-devtools/nhdogjmejiglipccpnnnanhbledajbpd) 以获得更好的调试体验。
+- [VS Code](https://code.visualstudio.com/) + [Vue (Official)](https://marketplace.visualstudio.com/items?itemName=Vue.volar) extension (disable Vetur if installed).
+- Install [Vue.js devtools](https://chromewebstore.google.com/detail/vuejs-devtools/nhdogjmejiglipccpnnnanhbledajbpd) in your browser for a better debugging experience.
