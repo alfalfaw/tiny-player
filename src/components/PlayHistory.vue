@@ -1,13 +1,19 @@
 <script setup>
-import { ref } from "vue";
+import { ref, computed } from "vue";
 import { usePlayerStore } from "@/stores/player";
+import MarksPanel from "@/components/MarksPanel.vue";
 
 const store = usePlayerStore();
 
 const activeTab = ref("queue");
 const dragOverSidebar = ref(false);
 
-const emit = defineEmits(["play-queue-item"]);
+const emit = defineEmits(["play-queue-item", "seek"]);
+
+// 当前视频的标记数量（用于 Tab 角标）
+const currentMarkCount = computed(
+  () => store.getMarks(store.currentVideo?.videoId).length,
+);
 
 // 侧边栏拖拽 - 在最外层监听，用 relatedTarget 判断进出
 function onSidebarDragEnter(e) {
@@ -28,7 +34,7 @@ function onSidebarDragLeave(e) {
   }
 }
 
-function onSidebarDrop(e) {
+async function onSidebarDrop(e) {
   e.preventDefault();
   e.stopPropagation();
   dragOverSidebar.value = false;
@@ -36,7 +42,7 @@ function onSidebarDrop(e) {
     f.type.startsWith("video/"),
   );
   if (files.length > 0) {
-    store.addToQueue(files);
+    await store.addToQueue(files);
   }
 }
 
@@ -45,13 +51,13 @@ function playQueueItem(item) {
   emit("play-queue-item", item);
 }
 
-// 从历史记录播放：优先从队列中查找
-function isInQueue(fileName) {
-  return store.queue.some((q) => q.fileName === fileName);
+// 从历史记录播放：按视频内容指纹在队列中查找
+function isInQueue(videoId) {
+  return store.queue.some((q) => q.videoId === videoId);
 }
 
 function playFromHistory(item) {
-  const queueItem = store.queue.find((q) => q.fileName === item.fileName);
+  const queueItem = store.queue.find((q) => q.videoId === item.videoId);
   if (queueItem) {
     emit("play-queue-item", queueItem);
   }
@@ -123,6 +129,15 @@ function getProgressPercent(item) {
         @click="activeTab = 'history'"
       >
         历史
+      </button>
+      <button
+        :class="{ active: activeTab === 'marks' }"
+        @click="activeTab = 'marks'"
+      >
+        标记
+        <span v-if="currentMarkCount" class="badge mark-badge">{{
+          currentMarkCount
+        }}</span>
       </button>
     </div>
 
@@ -218,15 +233,15 @@ function getProgressPercent(item) {
         </div>
         <div
           v-for="item in store.history"
-          :key="item.fileName"
+          :key="item.videoId || item.fileName"
           class="history-item"
-          :class="{ playable: isInQueue(item.fileName) }"
+          :class="{ playable: isInQueue(item.videoId) }"
           @click="playFromHistory(item)"
         >
           <div class="item-info">
             <div class="item-name" :title="item.fileName">
               {{ item.fileName }}
-              <span v-if="!isInQueue(item.fileName)" class="not-available"
+              <span v-if="!isInQueue(item.videoId)" class="not-available"
                 >需重新拖入</span
               >
             </div>
@@ -251,7 +266,7 @@ function getProgressPercent(item) {
           </div>
           <button
             class="remove-btn"
-            @click.stop="store.removeHistory(item.fileName)"
+            @click.stop="store.removeHistory(item.videoId || item.fileName)"
             title="删除"
           >
             <svg
@@ -268,6 +283,11 @@ function getProgressPercent(item) {
           </button>
         </div>
       </div>
+    </div>
+
+    <!-- 标记 Tab -->
+    <div v-show="activeTab === 'marks'" class="tab-content marks-tab">
+      <MarksPanel @seek="(time) => emit('seek', time)" />
     </div>
   </div>
 </template>
@@ -352,6 +372,15 @@ function getProgressPercent(item) {
   padding: 1px 6px;
   border-radius: 8px;
   font-weight: 600;
+}
+
+.badge.mark-badge {
+  background: rgba(251, 191, 36, 0.2);
+  color: #fbbf24;
+}
+
+.marks-tab {
+  padding: 0;
 }
 
 /* Tab content */

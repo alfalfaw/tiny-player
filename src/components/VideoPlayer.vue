@@ -24,13 +24,32 @@ const controlsTimer = ref(null);
 const videoSrc = ref("");
 const videoFileName = ref("");
 const videoFileSize = ref(0);
+const videoId = ref("");
+
+// 标记相关状态
+const showMarkInput = ref(false);
+const markDraft = ref("");
+const markDraftTime = ref(0);
+const markInputRef = ref(null);
+
+// 当前视频的标记（按时间升序）
+const currentMarks = computed(() => store.getMarks(videoId.value));
 
 const emit = defineEmits(["switch-video", "video-ended"]);
 
-// 拖拽事件 - 播放器区域始终接受拖拽
+// 判断拖拽内容是否包含真实文件（区分文件拖入与页面内元素拖拽）
+function dragHasFiles(e) {
+  const types = e.dataTransfer?.types;
+  if (!types) return false;
+  return Array.from(types).includes("Files");
+}
+
+// 拖拽事件 - 播放器区域仅响应「文件」拖拽
 function onDragOver(e) {
   e.preventDefault();
-  dragOver.value = true;
+  if (dragHasFiles(e)) {
+    dragOver.value = true;
+  }
 }
 
 function onDragLeave(e) {
@@ -41,11 +60,16 @@ function onDragLeave(e) {
 function onDrop(e) {
   e.preventDefault();
   dragOver.value = false;
-  const files = e.dataTransfer.files;
-  if (files.length > 0) {
+  const files = e.dataTransfer?.files;
+  if (files && files.length > 0) {
     // 拖到播放器 = 立即切换
     emit("switch-video", files[0]);
   }
+}
+
+// 阻止从控制栏内部发起原生拖拽（避免拖进度条时被浏览器当成元素拖拽）
+function onControlsDragStart(e) {
+  e.preventDefault();
 }
 
 // 通过文件选择器选择文件
@@ -54,13 +78,13 @@ function pickFile() {
   input.type = "file";
   input.accept = "video/*";
   input.multiple = true;
-  input.onchange = (e) => {
+  input.onchange = async (e) => {
     if (e.target.files.length > 0) {
       // 第一个文件立即播放，其余加入队列
       emit("switch-video", e.target.files[0]);
       if (e.target.files.length > 1) {
         const rest = Array.from(e.target.files).slice(1);
-        store.addToQueue(rest);
+        await store.addToQueue(rest);
       }
     }
   };
@@ -68,13 +92,18 @@ function pickFile() {
 }
 
 // 加载视频（由 App.vue 调用）
-function loadVideo(url, fileName, fileSize) {
-  // 释放旧的 ObjectURL（仅释放由外部创建的，不释放自身创建的）
+function loadVideo(url, fileName, fileSize, id) {
   videoSrc.value = url;
   videoFileName.value = fileName;
   videoFileSize.value = fileSize;
+  videoId.value = id || "";
+
+  // 关闭上一个视频残留的标记输入
+  showMarkInput.value = false;
+  markDraft.value = "";
 
   store.setCurrentVideo({
+    videoId: videoId.value,
     fileName,
     fileSize,
   });
@@ -92,7 +121,7 @@ function onLoadedMetadata() {
   const video = videoRef.value;
   if (!video) return;
   store.duration = video.duration;
-  const saved = store.getProgress(videoFileName.value);
+  const saved = store.getProgress(videoId.value);
   if (saved && saved.currentTime > 0 && saved.currentTime < video.duration) {
     video.currentTime = saved.currentTime;
   }
@@ -152,16 +181,18 @@ const progressPercent = computed(() => {
   return (store.currentTime / store.duration) * 100;
 });
 
-function onProgressClick(e) {
-  const bar = e.currentTarget;
+// 根据指针位置换算目标时间并跳转
+function seekFromPointer(e, bar) {
   const rect = bar.getBoundingClientRect();
-  const percent = (e.clientX - rect.left) / rect.width;
+  if (!rect.width) return;
+  const percent = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
   seek(percent * store.duration);
 }
 
 function onProgressMouseMove(e) {
   const bar = e.currentTarget;
   const rect = bar.getBoundingClientRect();
+  if (!rect.width) return;
   const percent = Math.max(
     0,
     Math.min(1, (e.clientX - rect.left) / rect.width),
@@ -169,30 +200,46 @@ function onProgressMouseMove(e) {
   hoverProgress.value = percent * store.duration;
 }
 
-function onProgressMouseDown(e) {
+// 使用 Pointer Events + 指针捕获：
+// 指针捕获保证 pointerup/pointercancel 一定回到进度条上，即使指针移出元素或
+// 被浏览器接管（如触发原生拖拽），也能可靠地结束拖拽状态，避免监听器泄漏。
+function onProgressPointerDown(e) {
+  if (e.button !== 0) return;
+  const bar = e.currentTarget;
+  e.preventDefault();
+
   progressDragging.value = true;
-  onProgressClick(e);
+  try {
+    bar.setPointerCapture(e.pointerId);
+  } catch {
+    // 部分环境不支持指针捕获，忽略即可
+  }
+  seekFromPointer(e, bar);
 
-  const onMouseMove = (e) => {
-    const bar = document.querySelector(".progress-bar");
-    if (!bar) return;
-    const rect = bar.getBoundingClientRect();
-    const percent = Math.max(
-      0,
-      Math.min(1, (e.clientX - rect.left) / rect.width),
-    );
-    seek(percent * store.duration);
+  const onPointerMove = (ev) => {
+    if (!progressDragging.value) return;
+    seekFromPointer(ev, bar);
   };
 
-  const onMouseUp = () => {
+  const finish = (ev) => {
+    if (!progressDragging.value) return;
     progressDragging.value = false;
+    if (ev?.pointerId !== undefined) {
+      try {
+        bar.releasePointerCapture(ev.pointerId);
+      } catch {
+        // 忽略
+      }
+    }
     saveCurrentProgress();
-    document.removeEventListener("mousemove", onMouseMove);
-    document.removeEventListener("mouseup", onMouseUp);
+    bar.removeEventListener("pointermove", onPointerMove);
+    bar.removeEventListener("pointerup", finish);
+    bar.removeEventListener("pointercancel", finish);
   };
 
-  document.addEventListener("mousemove", onMouseMove);
-  document.addEventListener("mouseup", onMouseUp);
+  bar.addEventListener("pointermove", onPointerMove);
+  bar.addEventListener("pointerup", finish);
+  bar.addEventListener("pointercancel", finish);
 }
 
 // 音量
@@ -240,8 +287,13 @@ function toggleFullscreen() {
 
 // 保存进度
 function saveCurrentProgress() {
-  if (videoFileName.value) {
-    store.saveProgress(videoFileName.value, store.currentTime, store.duration);
+  if (videoId.value) {
+    store.saveProgress(
+      videoId.value,
+      store.currentTime,
+      store.duration,
+      videoFileName.value,
+    );
   }
 }
 
@@ -249,7 +301,8 @@ function saveCurrentProgress() {
 function showControlsTemporarily() {
   showControls.value = true;
   clearTimeout(controlsTimer.value);
-  if (store.isPlaying) {
+  // 正在输入标记时不自动隐藏
+  if (store.isPlaying && !showMarkInput.value) {
     controlsTimer.value = setTimeout(() => {
       showControls.value = false;
     }, 3000);
@@ -264,11 +317,26 @@ function onMouseMove() {
 function onKeyDown(e) {
   const video = videoRef.value;
   if (!video) return;
+  // 正在输入（如标记内容）时不触发快捷键
+  const target = e.target;
+  if (
+    target &&
+    (target.tagName === "INPUT" ||
+      target.tagName === "TEXTAREA" ||
+      target.isContentEditable)
+  ) {
+    if (e.key === "Escape") cancelMarkInput();
+    return;
+  }
   switch (e.key) {
     case " ":
     case "k":
       e.preventDefault();
       togglePlay();
+      break;
+    case "n":
+      e.preventDefault();
+      openMarkInput();
       break;
     case "ArrowLeft":
       e.preventDefault();
@@ -340,8 +408,54 @@ function formatTime(seconds) {
   return store.formatTime(seconds);
 }
 
+// ---------- 标记 ----------
+
+// 标记在时间轴上的水平位置（百分比）
+function markPercent(mark) {
+  if (!store.duration) return 0;
+  return Math.min(100, Math.max(0, (mark.time / store.duration) * 100));
+}
+
+// 点击标记跳转到对应时间
+function onMarkClick(mark) {
+  seek(mark.time);
+}
+
+// 打开标记输入（默认记录当前播放时间）
+function openMarkInput() {
+  const video = videoRef.value;
+  if (!video || !videoId.value) return;
+  markDraftTime.value = video.currentTime;
+  markDraft.value = "";
+  showMarkInput.value = true;
+  showControls.value = true;
+  clearTimeout(controlsTimer.value);
+  nextTick(() => markInputRef.value?.focus());
+}
+
+function cancelMarkInput() {
+  showMarkInput.value = false;
+  markDraft.value = "";
+}
+
+function submitMarkInput() {
+  if (!videoId.value) return;
+  const content = markDraft.value.trim();
+  if (!content) return;
+  store.addMark(videoId.value, markDraftTime.value, content);
+  showMarkInput.value = false;
+  markDraft.value = "";
+}
+
+// 供侧边栏标记列表跳转使用
+function seekTo(time) {
+  seek(time);
+  const video = videoRef.value;
+  if (video && video.paused) video.play().catch(() => {});
+}
+
 // 暴露方法给父组件
-defineExpose({ loadVideo });
+defineExpose({ loadVideo, seekTo });
 </script>
 
 <template>
@@ -406,6 +520,7 @@ defineExpose({ loadVideo });
       <video
         ref="videoRef"
         :src="videoSrc"
+        draggable="false"
         @loadedmetadata="onLoadedMetadata"
         @timeupdate="onTimeUpdate"
         @play="onPlay"
@@ -419,13 +534,15 @@ defineExpose({ loadVideo });
       <div
         class="controls"
         :class="{ visible: showControls || !store.isPlaying }"
+        @dragstart="onControlsDragStart"
       >
         <!-- 进度条 -->
         <div
           class="progress-bar"
-          @click="onProgressClick"
+          draggable="false"
+          @pointerdown="onProgressPointerDown"
           @mousemove="onProgressMouseMove"
-          @mousedown="onProgressMouseDown"
+          @dragstart="onControlsDragStart"
         >
           <div
             class="progress-played"
@@ -435,11 +552,47 @@ defineExpose({ loadVideo });
             class="progress-thumb"
             :style="{ left: progressPercent + '%' }"
           ></div>
+          <!-- 标记点 -->
+          <div
+            v-for="mark in currentMarks"
+            :key="mark.id"
+            class="mark-marker"
+            :style="{ left: markPercent(mark) + '%' }"
+            @click.stop="onMarkClick(mark)"
+            @mousedown.stop
+          >
+            <span class="mark-dot"></span>
+            <div class="mark-tooltip">
+              <span class="mark-tooltip-time">{{ formatTime(mark.time) }}</span>
+              <span class="mark-tooltip-content">{{ mark.content }}</span>
+            </div>
+          </div>
           <div
             class="progress-tooltip"
             :style="{ left: progressPercent + '%' }"
           >
             {{ formatTime(hoverProgress) }}
+          </div>
+        </div>
+
+        <!-- 标记输入 -->
+        <div v-if="showMarkInput" class="mark-input-panel">
+          <div class="mark-input-title">
+            在 {{ formatTime(markDraftTime) }} 添加标记
+          </div>
+          <input
+            ref="markInputRef"
+            v-model="markDraft"
+            class="mark-input"
+            type="text"
+            maxlength="200"
+            placeholder="输入标记内容..."
+            @keydown.enter.prevent="submitMarkInput"
+            @keydown.esc="cancelMarkInput"
+          />
+          <div class="mark-input-actions">
+            <button class="mark-btn-cancel" @click="cancelMarkInput">取消</button>
+            <button class="mark-btn-save" @click="submitMarkInput">保存</button>
           </div>
         </div>
 
@@ -528,6 +681,32 @@ defineExpose({ loadVideo });
               {{ formatTime(store.currentTime) }} /
               {{ formatTime(store.duration) }}
             </span>
+
+            <!-- 添加标记 -->
+            <button
+              class="ctrl-btn mark-add-btn"
+              :class="{ active: showMarkInput }"
+              :disabled="!videoId"
+              @click="openMarkInput"
+              :title="`添加标记 (n)${currentMarks.length ? ` · 已有 ${currentMarks.length} 个` : ''}`"
+            >
+              <svg
+                width="18"
+                height="18"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z" />
+                <line x1="4" y1="22" x2="4" y2="15" />
+              </svg>
+              <span v-if="currentMarks.length" class="mark-count">{{
+                currentMarks.length
+              }}</span>
+            </button>
           </div>
 
           <div class="controls-right">
@@ -785,6 +964,10 @@ video {
   cursor: pointer;
   margin-bottom: 10px;
   transition: height 0.15s;
+  /* 避免拖拽时选中文本或触发原生拖拽/滚动手势 */
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: none;
 }
 
 .progress-bar:hover {
@@ -1001,5 +1184,175 @@ video {
 
 .video-title.visible {
   opacity: 1;
+}
+
+/* 时间轴标记 */
+.mark-marker {
+  position: absolute;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 14px;
+  height: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  z-index: 3;
+}
+
+.mark-dot {
+  width: 10px;
+  height: 10px;
+  background: #fbbf24;
+  border: 2px solid rgba(0, 0, 0, 0.55);
+  border-radius: 50%;
+  box-shadow: 0 0 4px rgba(251, 191, 36, 0.7);
+  transition: transform 0.15s ease;
+}
+
+.mark-marker:hover .mark-dot {
+  transform: scale(1.35);
+  background: #fcd34d;
+}
+
+.mark-tooltip {
+  position: absolute;
+  bottom: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: 240px;
+  padding: 6px 10px;
+  background: rgba(0, 0, 0, 0.92);
+  border: 1px solid rgba(251, 191, 36, 0.4);
+  border-radius: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    opacity 0.15s ease,
+    visibility 0.15s ease;
+  pointer-events: none;
+  z-index: 30;
+}
+
+.mark-marker:hover .mark-tooltip {
+  opacity: 1;
+  visibility: visible;
+}
+
+.mark-tooltip-time {
+  font-size: 11px;
+  font-weight: 600;
+  color: #fbbf24;
+  font-variant-numeric: tabular-nums;
+}
+
+.mark-tooltip-content {
+  font-size: 12px;
+  color: #eee;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* 添加标记按钮 */
+.mark-add-btn {
+  position: relative;
+}
+
+.mark-add-btn.active {
+  background: rgba(251, 191, 36, 0.2);
+  color: #fbbf24;
+}
+
+.mark-count {
+  position: absolute;
+  top: -2px;
+  right: -4px;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 3px;
+  background: #fbbf24;
+  color: #1a1a1a;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 14px;
+  text-align: center;
+  border-radius: 7px;
+}
+
+/* 标记输入面板 */
+.mark-input-panel {
+  margin-bottom: 10px;
+  padding: 10px 12px;
+  background: rgba(20, 20, 20, 0.96);
+  border: 1px solid rgba(251, 191, 36, 0.35);
+  border-radius: 8px;
+  backdrop-filter: blur(10px);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.mark-input-title {
+  font-size: 12px;
+  color: #fbbf24;
+  font-variant-numeric: tabular-nums;
+}
+
+.mark-input {
+  width: 100%;
+  padding: 7px 10px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
+  color: #fff;
+  font-size: 13px;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.mark-input:focus {
+  border-color: #fbbf24;
+}
+
+.mark-input::placeholder {
+  color: #666;
+}
+
+.mark-input-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.mark-input-actions button {
+  padding: 5px 14px;
+  border: none;
+  border-radius: 6px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.mark-btn-cancel {
+  background: rgba(255, 255, 255, 0.08);
+  color: #ccc;
+}
+
+.mark-btn-cancel:hover {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.mark-btn-save {
+  background: #fbbf24;
+  color: #1a1a1a;
+  font-weight: 600;
+}
+
+.mark-btn-save:hover {
+  background: #fcd34d;
 }
 </style>

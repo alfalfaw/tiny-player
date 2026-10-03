@@ -21,26 +21,31 @@ onBeforeUnmount(() => {
   document.removeEventListener("drop", preventDragDefault);
 });
 
-// 拖到播放器 → 立即切换视频
-function onSwitchVideo(file) {
+// 拖到播放器 → 立即切换视频（先算内容指纹，再入队去重）
+async function onSwitchVideo(file) {
   if (!file.type.startsWith("video/")) return;
-  const items = store.addToQueue([file]);
+  const items = await store.addToQueue([file]);
   if (items.length > 0) {
     playQueueItem(items[0]);
-  } else {
-    // 文件已在队列中，找到它并播放
-    const existing = store.queue.find((q) => q.fileName === file.name);
-    if (existing) playQueueItem(existing);
   }
 }
 
 // 从队列点击播放
 function playQueueItem(item) {
   store.setCurrentQueueItem(item.id);
-  console.log(item.id);
   nextTick(() => {
-    playerRef.value?.loadVideo(item.url, item.fileName, item.fileSize);
+    playerRef.value?.loadVideo(
+      item.url,
+      item.fileName,
+      item.fileSize,
+      item.videoId,
+    );
   });
+}
+
+// 标记列表跳转
+function onSeekMark(time) {
+  playerRef.value?.seekTo(time);
 }
 
 // 视频播放结束 → 自动播放下一个
@@ -121,7 +126,7 @@ function playNext() {
       </div>
       <transition name="slide">
         <aside v-if="showSidebar" class="sidebar">
-          <PlayHistory @play-queue-item="playQueueItem" />
+          <PlayHistory @play-queue-item="playQueueItem" @seek="onSeekMark" />
         </aside>
       </transition>
     </main>

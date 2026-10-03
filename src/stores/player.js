@@ -1,5 +1,7 @@
 import { defineStore } from "pinia";
 import { ref, computed } from "vue";
+import { computeVideoId } from "@/utils/videoId";
+import { buildExportPayload, mergeMarkMap } from "@/utils/marksIO";
 
 export const usePlayerStore = defineStore(
   "player",
@@ -17,15 +19,19 @@ export const usePlayerStore = defineStore(
     // 播放速率
     const playbackRate = ref(1);
 
-    // 播放进度记录 { fileName: { currentTime, duration, lastPlayTime } }
+    // 播放进度记录 { [videoId]: { currentTime, duration, fileName, lastPlayTime } }
     const progressMap = ref({});
 
-    // 播放历史 { fileName, fileSize, lastPlayTime, currentTime, duration }
+    // 播放历史 { videoId, fileName, fileSize, lastPlayTime, currentTime, duration }
     const history = ref([]);
 
-    // 播放队列 { id, file, url, fileName, fileSize }
+    // 播放队列 { id, file, url, videoId, fileName, fileSize }
     // 注意：队列不持久化（File 对象无法序列化）
     const queue = ref([]);
+
+    // 视频标记 { [videoId]: Mark[] }
+    // Mark: { id, time, content, color, createdAt, updatedAt }
+    const marks = ref({});
 
     // 当前播放项在队列中的 id
     const currentQueueId = ref(null);
@@ -47,27 +53,47 @@ export const usePlayerStore = defineStore(
       return currentQueueIndex.value > 0;
     });
 
-    // 添加到队列（同名文件更新 url）
-    function addToQueue(files) {
+    // 队列项 id 生成器
+    let queueIdSeq = 0;
+    function nextQueueId() {
+      return `${Date.now()}-${queueIdSeq++}`;
+    }
+
+    // 添加到队列（按视频内容指纹 videoId 去重，而非文件名）
+    async function addToQueue(files) {
       const items = [];
       for (const file of files) {
         if (!file.type.startsWith("video/")) continue;
-        const existingIdx = queue.value.findIndex(
-          (q) => q.fileName === file.name,
-        );
+
+        // 计算内容指纹；失败时退化为文件名，保证仍可播放
+        let videoId = null;
+        try {
+          videoId = await computeVideoId(file);
+        } catch {
+          videoId = `name:${file.name}`;
+        }
+
+        const existingIdx = queue.value.findIndex((q) => q.videoId === videoId);
+        const url = URL.createObjectURL(file);
         if (existingIdx >= 0) {
-          // 同名文件已存在，更新 url 和 file
+          // 同一内容已存在，更新 file/url 并保留原顺序
           const old = queue.value[existingIdx];
           if (old.url) URL.revokeObjectURL(old.url);
-          const url = URL.createObjectURL(file);
-          queue.value[existingIdx] = { ...old, file, url };
-          items.push(queue.value[existingIdx]);
-        } else {
-          const url = URL.createObjectURL(file);
-          const item = {
-            id: Date.now(),
+          queue.value[existingIdx] = {
+            ...old,
             file,
             url,
+            fileName: file.name,
+            fileSize: file.size,
+            videoId,
+          };
+          items.push(queue.value[existingIdx]);
+        } else {
+          const item = {
+            id: nextQueueId(),
+            file,
+            url,
+            videoId,
             fileName: file.name,
             fileSize: file.size,
           };
@@ -119,31 +145,34 @@ export const usePlayerStore = defineStore(
       currentQueueId.value = id;
     }
 
-    // 保存播放进度
-    function saveProgress(fileName, currentTimeVal, durationVal) {
-      if (!fileName) return;
-      progressMap.value[fileName] = {
+    // 保存播放进度（按 videoId 记录，fileName 仅用于展示）
+    function saveProgress(videoId, currentTimeVal, durationVal, fileName) {
+      if (!videoId) return;
+      const prev = progressMap.value[videoId];
+      progressMap.value[videoId] = {
         currentTime: currentTimeVal,
         duration: durationVal,
+        fileName: fileName || prev?.fileName || null,
         lastPlayTime: Date.now(),
       };
-      updateHistory(fileName, null, currentTimeVal, durationVal);
+      updateHistory(videoId, fileName, null, currentTimeVal, durationVal);
     }
 
     // 获取播放进度
-    function getProgress(fileName) {
-      return progressMap.value[fileName] || null;
+    function getProgress(videoId) {
+      if (!videoId) return null;
+      return progressMap.value[videoId] || null;
     }
 
     // 更新播放历史
-    function updateHistory(fileName, fileSize, currentTimeVal, durationVal) {
-      if (!fileName) return;
-      const existingIndex = history.value.findIndex(
-        (h) => h.fileName === fileName,
-      );
+    function updateHistory(videoId, fileName, fileSize, currentTimeVal, durationVal) {
+      if (!videoId) return;
+      const existingIndex = history.value.findIndex((h) => h.videoId === videoId);
+      const prev = existingIndex >= 0 ? history.value[existingIndex] : null;
       const record = {
-        fileName,
-        fileSize: fileSize || null,
+        videoId,
+        fileName: fileName || prev?.fileName || null,
+        fileSize: fileSize || prev?.fileSize || null,
         lastPlayTime: Date.now(),
         currentTime: currentTimeVal ?? 0,
         duration: durationVal ?? 0,
@@ -158,9 +187,10 @@ export const usePlayerStore = defineStore(
     }
 
     // 从历史记录中删除
-    function removeHistory(fileName) {
-      history.value = history.value.filter((h) => h.fileName !== fileName);
-      delete progressMap.value[fileName];
+    function removeHistory(videoId) {
+      if (!videoId) return;
+      history.value = history.value.filter((h) => h.videoId !== videoId);
+      delete progressMap.value[videoId];
     }
 
     // 清空历史
@@ -172,10 +202,119 @@ export const usePlayerStore = defineStore(
     // 设置当前视频
     function setCurrentVideo(videoInfo) {
       currentVideo.value = videoInfo;
-      const saved = getProgress(videoInfo?.fileName);
+      const saved = getProgress(videoInfo?.videoId);
       if (saved) {
         currentTime.value = saved.currentTime;
       }
+    }
+
+    // ---------- 标记 ----------
+
+    // 获取某个视频的标记（按时间升序）
+    function getMarks(videoId) {
+      if (!videoId) return [];
+      return marks.value[videoId] || [];
+    }
+
+    // 新增标记
+    function addMark(videoId, time, content) {
+      if (!videoId) return null;
+      const now = Date.now();
+      const mark = {
+        id:
+          typeof crypto !== "undefined" && crypto.randomUUID
+            ? crypto.randomUUID()
+            : `mark-${now}-${Math.random().toString(16).slice(2)}`,
+        time: Math.max(0, Number(time) || 0),
+        content: String(content || "").trim(),
+        color: null,
+        createdAt: now,
+        updatedAt: now,
+      };
+      const list = [...(marks.value[videoId] || []), mark].sort(
+        (a, b) => a.time - b.time,
+      );
+      marks.value = { ...marks.value, [videoId]: list };
+      return mark;
+    }
+
+    // 更新标记（内容或时间）
+    function updateMark(videoId, markId, patch) {
+      const list = marks.value[videoId];
+      if (!list) return;
+      const next = list
+        .map((mark) =>
+          mark.id === markId
+            ? {
+                ...mark,
+                ...patch,
+                time:
+                  patch.time !== undefined
+                    ? Math.max(0, Number(patch.time) || 0)
+                    : mark.time,
+                content:
+                  patch.content !== undefined
+                    ? String(patch.content).trim()
+                    : mark.content,
+                updatedAt: Date.now(),
+              }
+            : mark,
+        )
+        .sort((a, b) => a.time - b.time);
+      marks.value = { ...marks.value, [videoId]: next };
+    }
+
+    // 删除标记
+    function removeMark(videoId, markId) {
+      const list = marks.value[videoId];
+      if (!list) return;
+      const next = list.filter((mark) => mark.id !== markId);
+      const map = { ...marks.value };
+      if (next.length) {
+        map[videoId] = next;
+      } else {
+        delete map[videoId];
+      }
+      marks.value = map;
+    }
+
+    // 清空某个视频的全部标记
+    function clearMarks(videoId) {
+      if (!marks.value[videoId]) return;
+      const map = { ...marks.value };
+      delete map[videoId];
+      marks.value = map;
+    }
+
+    // 构建导出内容（一次导出全部标记，附带已知的视频展示信息）
+    function buildMarksExport() {
+      const meta = {};
+      for (const item of queue.value) {
+        if (item.videoId) {
+          meta[item.videoId] = { fileName: item.fileName, duration: null };
+        }
+      }
+      for (const record of history.value) {
+        if (!record.videoId) continue;
+        meta[record.videoId] = {
+          fileName: record.fileName,
+          duration: record.duration,
+        };
+      }
+      for (const [videoId, progress] of Object.entries(progressMap.value)) {
+        meta[videoId] = {
+          fileName: meta[videoId]?.fileName ?? progress.fileName ?? null,
+          duration: progress.duration ?? meta[videoId]?.duration ?? null,
+        };
+      }
+      return buildExportPayload(marks.value, meta);
+    }
+
+    // 应用导入结果（合并），返回统计信息
+    function applyImportedMarks(incomingVideos) {
+      const { map, stats } = mergeMarkMap(marks.value, incomingVideos);
+      marks.value = map;
+      return stats;
     }
 
     // 格式化时间
@@ -210,6 +349,7 @@ export const usePlayerStore = defineStore(
       progressMap,
       history,
       queue,
+      marks,
       currentQueueId,
       currentQueueIndex,
       hasNext,
@@ -226,6 +366,13 @@ export const usePlayerStore = defineStore(
       removeHistory,
       clearHistory,
       setCurrentVideo,
+      getMarks,
+      addMark,
+      updateMark,
+      removeMark,
+      clearMarks,
+      buildMarksExport,
+      applyImportedMarks,
       formatTime,
       formatSize,
     };
@@ -240,6 +387,7 @@ export const usePlayerStore = defineStore(
         "playbackRate",
         "progressMap",
         "history",
+        "marks",
       ],
     },
   },
